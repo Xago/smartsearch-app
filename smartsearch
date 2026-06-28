@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# smartsearch — búsqueda interactiva de archivos en macOS
+# ponytail: bash puro, mdfind/find/open nativos, sin dependencias
+
+b=$(tput bold 2>/dev/null); r=$(tput sgr0 2>/dev/null)
+g=$(tput setaf 2 2>/dev/null); y=$(tput setaf 3 2>/dev/null); c=$(tput setaf 6 2>/dev/null)
+
+# mdutil necesita el punto de montaje del volumen, no un subdirectorio
+mount_of() { df -P "$1" 2>/dev/null | awk 'NR==2{print $6}'; }
+is_indexed() { mdutil -s "$(mount_of "$1")" 2>/dev/null | grep -q "Indexing enabled"; }
+
+age() {
+    local d=$(( ( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || echo 0) ) / 86400 ))
+    case $d in 0) echo "hoy";; 1) echo "ayer";; *) echo "hace ${d}d";; esac
+}
+
+# ── tipo ───────────────────────────────────────────────────────────────────────
+pick_type() {
+    printf "\n${b}Tipo de archivo:${r}\n"
+    printf "  1) Imágenes   (png jpg jpeg webp svg heic)\n"
+    printf "  2) Documentos (pdf docx xlsx pptx txt)\n"
+    printf "  3) Otro\n→ "
+    read -r opt
+    case $opt in
+        1) MD_TYPE="kMDItemContentTypeTree == 'public.image'"
+           FIND_PAT=(-iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg"
+                     -o -iname "*.webp" -o -iname "*.svg" -o -iname "*.heic")
+           LABEL_TYPE="Imágenes" ;;
+        2) printf "  Extensiones (Enter=todas, o ej: xlsx pptx): "; read -r doc_exts
+           if [[ -z "$doc_exts" ]]; then
+               doc_exts="pdf docx xlsx pptx txt"
+           fi
+           MD_TYPE=""; FIND_PAT=(); local first=1
+           for ext in $doc_exts; do
+               [[ $first -eq 1 ]] \
+                   && MD_TYPE="kMDItemFSName == '*.$ext'cd" \
+                   || MD_TYPE="$MD_TYPE || kMDItemFSName == '*.$ext'cd"
+               [[ ${#FIND_PAT[@]} -gt 0 ]] && FIND_PAT+=(-o)
+               FIND_PAT+=(-iname "*.$ext")
+               first=0
+           done
+           MD_TYPE="($MD_TYPE)"
+           LABEL_TYPE="Documentos (${doc_exts// /, })" ;;
+        3) printf "Extensión (sin punto): "; read -r ext
+           MD_TYPE="kMDItemFSName == '*.$ext'cd"
+           FIND_PAT=(-iname "*.$ext")
+           LABEL_TYPE="*.${ext}" ;;
+        *) pick_type; return ;;
+    esac
+}
+
+# ── nombre parcial ────────────────────────────────────────────────────────────
+pick_name() {
+    printf "\n${b}Nombre parcial${r} (Enter para omitir): "
+    read -r NAME_FILTER
+}
+
+# ── período ────────────────────────────────────────────────────────────────────
+pick_period() {
+    printf "\n${b}Período:${r}\n"
+    printf "  1) Última semana\n  2) Último mes\n  3) Rango personalizado\n  4) Sin límite\n→ "
+    read -r opt
+    case $opt in
+        1) MD_DATE="kMDItemFSContentChangeDate >= \$time.today(-7)"
+           MTIME=(-mtime -7)
+           LABEL_PERIOD="Última semana" ;;
+        2) MD_DATE="kMDItemFSContentChangeDate >= \$time.today(-30)"
+           MTIME=(-mtime -30)
+           LABEL_PERIOD="Último mes" ;;
+        4) MD_DATE=""
+           MTIME=()
+           LABEL_PERIOD="Sin límite" ;;
+        3) printf "Desde (YYYY-MM-DD): "; read -r from
+           printf "Hasta  (YYYY-MM-DD): "; read -r to
+           local now from_ts to_ts days_from days_to
+           now=$(date +%s)
+           from_ts=$(date -j -f "%Y-%m-%d" "$from" +%s 2>/dev/null || echo 0)
+           to_ts=$(date -j -f "%Y-%m-%d" "$to" +%s 2>/dev/null || echo 0)
+           days_from=$(( (now - from_ts) / 86400 + 1 ))
+           days_to=$(( (now - to_ts) / 86400 ))
+           [[ $days_to -lt 0 ]] && days_to=0
+           MD_DATE="kMDItemFSContentChangeDate >= \$time.iso(${from}) && kMDItemFSContentChangeDate <= \$time.iso(${to})"
+           MTIME=(-mtime -"$days_from" -mtime +"$days_to")
+           LABEL_PERIOD="${from} → ${to}" ;;
+        *) pick_period; return ;;
+    esac
+}
+
+# ── volúmenes ──────────────────────────────────────────────────────────────────
+pick_volumes() {
+    # interno = solo perfil de usuario (excluye dirs de sistema)
+    # externos = volumen completo
+    local vols=("$HOME")
+    local labels=("~/  (perfil de usuario)")
+    while IFS= read -r v; do
+        [[ "$v" == *"TimeMachine"* ]] && continue
+        vols+=("$v")
+        labels+=("$v  (unidad externa)")
+    done < <(find /Volumes -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+    printf "\n${b}¿Dónde buscar?${r}\n"
+    printf "  0) Todo\n"
+    local i=1
+    for v in "${vols[@]}"; do
+        if is_indexed "$v"; then
+            printf "  %d) %-50s ${g}● Spotlight${r}\n" $i "${labels[$((i-1))]}"
+        else
+            printf "  %d) %-50s ${y}○ sin índice${r}\n" $i "${labels[$((i-1))]}"
+        fi
+        i=$((i+1))
+    done
+    printf "→ "
+    read -r opt
+
+    if [[ "$opt" == "0" ]]; then
+        SEARCH_VOLS=("${vols[@]}")
+        LABEL_VOLS="Todo (perfil + externos)"
+    else
+        SEARCH_VOLS=("${vols[$((opt-1))]}")
+        LABEL_VOLS="${labels[$((opt-1))]}"
+    fi
+}
+
+# ── modificar parámetro ────────────────────────────────────────────────────────
+modify_search() {
+    printf "\n${b}Parámetros actuales:${r}\n"
+    printf "  1) Tipo:    %s\n" "$LABEL_TYPE"
+    printf "  2) Nombre:  %s\n" "${NAME_FILTER:-(sin filtro)}"
+    printf "  3) Período: %s\n" "$LABEL_PERIOD"
+    printf "  4) Dónde:   %s\n" "$LABEL_VOLS"
+    printf "¿Qué modificas? → "
+    read -r opt
+    case $opt in
+        1) pick_type ;;
+        2) pick_name ;;
+        3) pick_period ;;
+        4) pick_volumes ;;
+        *) printf "${y}Opción inválida${r}\n"; return ;;
+    esac
+    printf "\n${b}Buscando...${r}\n"
+    do_search
+    show_results
+}
+
+# ── búsqueda ───────────────────────────────────────────────────────────────────
+do_search() {
+    RESULTS=()
+    local tmpfile
+    tmpfile=$(mktemp)
+
+    local md_name="" find_name=()
+    [[ -n "$NAME_FILTER" ]] && md_name=" && kMDItemDisplayName == '*${NAME_FILTER}*'cd"
+    [[ -n "$NAME_FILTER" ]] && find_name=(-iname "*${NAME_FILTER}*")
+
+    for vol in "${SEARCH_VOLS[@]}"; do
+        if [[ "$vol" == "$HOME" ]]; then
+            # interno: enumerar solo dirs visibles del usuario (excluye Library, Applications y todo oculto)
+            local dirs=()
+            while IFS= read -r d; do
+                dirs+=("$d")
+            done < <(find "$HOME" -maxdepth 1 -mindepth 1 -type d \
+                         ! -name ".*" ! -name "Library" ! -name "Applications" 2>/dev/null | sort)
+
+            # archivos sueltos en raíz del home
+            find "$HOME" -maxdepth 1 -type f \( "${FIND_PAT[@]}" \) "${MTIME[@]}" "${find_name[@]}" 2>/dev/null >> "$tmpfile"
+            # buscar dentro de cada dir visible
+            for d in "${dirs[@]}"; do
+                find "$d" -type f \( "${FIND_PAT[@]}" \) "${MTIME[@]}" "${find_name[@]}" 2>/dev/null >> "$tmpfile"
+            done
+        else
+            # externos: volumen completo, mdfind si está indexado
+            if is_indexed "$vol"; then
+                local md_query="($MD_TYPE)"
+                [[ -n "$MD_DATE" ]] && md_query+=" && $MD_DATE"
+                [[ -n "$md_name" ]] && md_query+="$md_name"
+                mdfind "$md_query" -onlyin "$vol" 2>/dev/null >> "$tmpfile"
+            else
+                find "$vol" -type f \( "${FIND_PAT[@]}" \) "${MTIME[@]}" "${find_name[@]}" 2>/dev/null >> "$tmpfile"
+            fi
+        fi
+    done
+
+    # dedup, solo archivos existentes
+    local seen=()
+    while IFS= read -r f; do
+        [[ -f "$f" ]] && seen+=("$f")
+    done < <(sort -u "$tmpfile")
+    rm -f "$tmpfile"
+
+    # ordenar por fecha de modificación, más reciente primero
+    while IFS= read -r f; do
+        RESULTS+=("$f")
+    done < <(for f in "${seen[@]}"; do
+        stat -f "%m %N" "$f" 2>/dev/null
+    done | sort -rn | cut -d' ' -f2-)
+}
+
+# ── resultados ─────────────────────────────────────────────────────────────────
+show_results() {
+    local total=${#RESULTS[@]}
+    if [[ $total -eq 0 ]]; then
+        printf "\n${y}Sin resultados.${r}\n"
+        return 1
+    fi
+    printf "\n${g}${b}%d archivo(s) encontrado(s):${r}\n" $total
+    local i=1
+    for f in "${RESULTS[@]}"; do
+        printf "  ${b}[%d]${r} ${c}%s${r}  %s\n" $i "$(basename "$f")" "$(age "$f")"
+        printf "       %s\n" "$f"
+        i=$((i+1))
+    done
+}
+
+# ── acciones ───────────────────────────────────────────────────────────────────
+action_menu() {
+    local hint="${b}Acciones:${r}  <n>=abrir  a<n>=abrir  r<n>=revelar en Finder  m=modificar  n=nueva  q=salir"
+    printf "\n%s\n" "$hint"
+    while true; do
+        printf "→ "
+        read -r cmd
+        local idx file
+        case $cmd in
+            q|Q) exit 0 ;;
+            n|N) main; return ;;
+            m|M) modify_search; printf "\n%s\n" "$hint" ;;
+            [0-9]*) idx="$cmd"
+                 file=$([[ "$idx" =~ ^[0-9]+$ ]] && echo "${RESULTS[$((idx-1))]:-}" || echo "")
+                 [[ -n "$file" && -f "$file" ]] && open "$file" \
+                     || printf "${y}Número inválido${r}\n" ;;
+            a*)  idx="${cmd//[^0-9]/}"
+                 file=$([[ "$idx" =~ ^[0-9]+$ ]] && echo "${RESULTS[$((idx-1))]:-}" || echo "")
+                 [[ -n "$file" && -f "$file" ]] && open "$file" \
+                     || printf "${y}Uso: a<n>  ejemplo: a1${r}\n" ;;
+            r*)  idx="${cmd//[^0-9]/}"
+                 file=$([[ "$idx" =~ ^[0-9]+$ ]] && echo "${RESULTS[$((idx-1))]:-}" || echo "")
+                 [[ -n "$file" && -f "$file" ]] && open -R "$file" \
+                     || printf "${y}Uso: r<n>  ejemplo: r1${r}\n" ;;
+            *)   printf "${y}?${r}  " ;;
+        esac
+    done
+}
+
+# ── main ───────────────────────────────────────────────────────────────────────
+main() {
+    printf "\n${b}${c}── smartsearch ─────────────────────────────────────────${r}\n"
+    pick_type
+    pick_name
+    pick_period
+    pick_volumes
+    printf "\n${b}Buscando...${r}\n"
+    do_search
+    show_results && action_menu
+}
+
+main
