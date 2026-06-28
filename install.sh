@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# install.sh — instala smartsearch para el usuario actual en macOS
+# install.sh — instala smartsearch en macOS o Linux
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE=$(which node 2>/dev/null || echo "")
-PLIST="$HOME/Library/LaunchAgents/com.smartsearch.plist"
+OS=$(uname -s)   # Darwin | Linux
 
 echo ""
 echo "── smartsearch install ──────────────────────────"
+echo "  Sistema:    $OS"
 echo "  Directorio: $DIR"
 echo "  Usuario:    $USER ($HOME)"
 
@@ -23,26 +24,29 @@ echo "  Node.js:    $NODE ($(node --version))"
 chmod +x "$DIR/smartsearch"
 chmod +x "$DIR/smartsearch-ui.js"
 
-# ── symlink CLI en ~/bin (opcional, si ~/bin existe o se quiere crear) ─────────
+# ── symlink CLI en ~/bin ───────────────────────────────────────────────────────
 read -rp "  ¿Agregar 'smartsearch' CLI a ~/bin? (s/n): " add_cli
 if [[ "$add_cli" =~ ^[sS]$ ]]; then
   mkdir -p "$HOME/bin"
   ln -sf "$DIR/smartsearch" "$HOME/bin/smartsearch"
   echo "  ✓ Symlink creado: ~/bin/smartsearch"
   # agregar ~/bin al PATH si no está
-  if ! grep -q 'HOME/bin' "$HOME/.zshrc" 2>/dev/null; then
-    echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.zshrc"
-    echo "  ✓ ~/bin agregado al PATH en ~/.zshrc"
+  local_rc="$HOME/.zshrc"; [[ "$OS" == "Linux" ]] && local_rc="$HOME/.bashrc"
+  if ! grep -q 'HOME/bin' "$local_rc" 2>/dev/null; then
+    echo 'export PATH="$HOME/bin:$PATH"' >> "$local_rc"
+    echo "  ✓ ~/bin agregado al PATH en $local_rc"
   fi
 fi
 
-# ── LaunchAgent (servidor web en background) ───────────────────────────────────
+# ── servidor web en background ─────────────────────────────────────────────────
 read -rp "  ¿Instalar servidor web (auto-inicio en login, puerto 7823)? (s/n): " add_agent
 if [[ "$add_agent" =~ ^[sS]$ ]]; then
-  # desinstalar versión anterior si existe
-  launchctl unload "$PLIST" 2>/dev/null || true
 
-  cat > "$PLIST" <<EOF
+  if [[ "$OS" == "Darwin" ]]; then
+    # ── macOS: LaunchAgent ────────────────────────────────────────────────────
+    PLIST="$HOME/Library/LaunchAgents/com.smartsearch.plist"
+    launchctl unload "$PLIST" 2>/dev/null || true
+    cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -65,10 +69,37 @@ if [[ "$add_agent" =~ ^[sS]$ ]]; then
 </dict>
 </plist>
 EOF
+    launchctl load "$PLIST"
+    echo "  ✓ LaunchAgent instalado"
 
-  launchctl load "$PLIST"
-  sleep 1
+  else
+    # ── Linux: systemd user service ───────────────────────────────────────────
+    SERVICE_DIR="$HOME/.config/systemd/user"
+    SERVICE="$SERVICE_DIR/smartsearch.service"
+    mkdir -p "$SERVICE_DIR"
+    # detener servicio anterior si existe
+    systemctl --user stop smartsearch 2>/dev/null || true
+    cat > "$SERVICE" <<EOF
+[Unit]
+Description=smartsearch UI
+After=network.target
 
+[Service]
+ExecStart=$NODE $DIR/smartsearch-ui.js
+Restart=always
+StandardOutput=append:/tmp/smartsearch.log
+StandardError=append:/tmp/smartsearch.log
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable smartsearch
+    systemctl --user start smartsearch
+    echo "  ✓ systemd user service instalado"
+  fi
+
+  sleep 2
   if curl -s http://localhost:7823 | grep -q "smartsearch"; then
     echo "  ✓ Servidor corriendo → http://localhost:7823"
   else
