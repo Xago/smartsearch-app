@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// smartsearch-ui — interfaz web local para búsqueda de archivos en macOS
+// smartsearch-ui — interfaz web local para búsqueda de archivos en macOS y Linux
 // ponytail: http nativo, HTML inline, sin dependencias extra
 
 const http = require('http')
@@ -9,6 +9,7 @@ const { promisify } = require('util')
 const run  = promisify(exec)
 const HOME = process.env.HOME
 const PORT = 7823
+const OS   = require('os').platform()   // 'darwin' | 'linux'
 
 const sh = async cmd => { try { return (await run(cmd)).stdout.trim() } catch { return '' } }
 const safe  = p => p.replace(/"/g, '\\"')          // escapar rutas con comillas
@@ -19,15 +20,26 @@ const safeQ = q => q.replace(/\$/g, '\\$')        // escapar $ para que shell no
 async function getVolumes () {
   const vols = [{ path: HOME, label: 'Perfil de usuario (~)' }]
 
-  // iCloud Drive — dentro de Library pero es contenido del usuario
-  const icloud = `${HOME}/Library/Mobile Documents/com~apple~CloudDocs`
-  if ((await sh(`test -d "${icloud}" && echo yes`)) === 'yes')
-    vols.push({ path: icloud, label: 'iCloud Drive' })
+  if (OS === 'darwin') {
+    // iCloud Drive — dentro de Library pero es contenido del usuario
+    const icloud = `${HOME}/Library/Mobile Documents/com~apple~CloudDocs`
+    if ((await sh(`test -d "${icloud}" && echo yes`)) === 'yes')
+      vols.push({ path: icloud, label: 'iCloud Drive' })
 
-  const ext = await sh('find /Volumes -maxdepth 1 -mindepth 1 -type d 2>/dev/null | grep -v TimeMachine | sort')
-  for (const v of ext.split('\n').filter(Boolean))
-    vols.push({ path: v, label: path.basename(v) + ' (externa)' })
+    const ext = await sh('find /Volumes -maxdepth 1 -mindepth 1 -type d 2>/dev/null | grep -v TimeMachine | sort')
+    for (const v of ext.split('\n').filter(Boolean))
+      vols.push({ path: v, label: path.basename(v) + ' (externa)' })
+  } else {
+    // ponytail: cubre udisks2 (Ubuntu), /mnt manual y Fedora/run/media
+    for (const base of [`/media/${process.env.USER}`, '/media', '/mnt', `/run/media/${process.env.USER}`]) {
+      const dirs = await sh(`test -d "${base}" && find "${base}" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort`)
+      for (const v of dirs.split('\n').filter(Boolean))
+        vols.push({ path: v, label: path.basename(v) + ' (externa)' })
+    }
+  }
+
   for (const v of vols) {
+    if (OS !== 'darwin') { v.indexed = false; continue }
     const mp = await sh(`df -P "${safe(v.path)}" 2>/dev/null | awk 'NR==2{print $6}'`)
     v.indexed = (await sh(`mdutil -s "${safe(mp)}" 2>/dev/null`)).includes('Indexing enabled')
   }
@@ -87,7 +99,9 @@ async function search ({ type, extensions, nameFilter, period, dateFrom, dateTo,
           .split('\n').filter(Boolean).forEach(f => found.add(f))
     } else {
       const mp      = await sh(`df -P "${safe(vol)}" 2>/dev/null | awk 'NR==2{print $6}'`)
-      const indexed = (await sh(`mdutil -s "${safe(mp)}" 2>/dev/null`)).includes('Indexing enabled')
+      const indexed = OS === 'darwin'
+        ? (await sh(`mdutil -s "${safe(mp)}" 2>/dev/null`)).includes('Indexing enabled')
+        : false
       const out     = indexed
         ? await sh(`mdfind "${safeQ(mdQuery)}" -onlyin "${safe(vol)}" 2>/dev/null`)
         : await sh(`find "${safe(vol)}" -type f ${findArgs} 2>/dev/null`)
@@ -97,7 +111,8 @@ async function search ({ type, extensions, nameFilter, period, dateFrom, dateTo,
 
   // stats + ordenar por fecha desc
   const results = await Promise.all([...found].map(async f => {
-    const stat = await sh(`stat -f "%m|%z" "${safe(f)}" 2>/dev/null`)
+    const statCmd = OS === 'darwin' ? `stat -f "%m|%z" "${safe(f)}"` : `stat -c "%Y|%s" "${safe(f)}"`
+    const stat = await sh(`${statCmd} 2>/dev/null`)
     const [mtime, size] = stat.split('|').map(Number)
     return { path: f, name: path.basename(f), mtime: mtime || 0, size: size || 0 }
   }))
@@ -120,8 +135,21 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && url.pathname === '/')             { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(HTML) }
     if (req.method === 'GET'  && url.pathname === '/api/volumes')  return json(await getVolumes())
     if (req.method === 'POST' && url.pathname === '/api/search')   return json(await search(await body()))
-    if (req.method === 'POST' && url.pathname === '/api/open')     { const { path: p } = await body(); await sh(`open "${safe(p)}"`);    return json({ ok: true }) }
-    if (req.method === 'POST' && url.pathname === '/api/reveal')   { const { path: p } = await body(); await sh(`open -R "${safe(p)}"`); return json({ ok: true }) }
+    if (req.method === 'POST' && url.pathname === '/api/open') {
+      const { path: p } = await body()
+      await sh(OS === 'darwin' ? `open "${safe(p)}"` : `xdg-open "${safe(p)}"`)
+      return json({ ok: true })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/reveal') {
+      const { path: p } = await body()
+      if (OS === 'darwin') {
+        await sh(`open -R "${safe(p)}"`)
+      } else {
+        const hasNautilus = await sh('command -v nautilus')
+        await sh(hasNautilus ? `nautilus --select "${safe(p)}"` : `xdg-open "${safe(path.dirname(p))}"`)
+      }
+      return json({ ok: true })
+    }
   } catch (e) { return json({ error: e.message }, 500) }
 
   res.writeHead(404); res.end()
@@ -130,7 +158,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   const url = `http://localhost:${PORT}`
   console.log(`\nsmарtsearch UI → ${url}\n`)
-  exec(`open ${url}`)
+  exec(OS === 'darwin' ? `open ${url}` : `xdg-open ${url}`)
 })
 
 // ── HTML ──────────────────────────────────────────────────────────────────────
@@ -337,7 +365,7 @@ function render () {
           </div>
           <div class="rbtns">
             <button class="btn-sm" onclick="act('open',\${i})">Abrir</button>
-            <button class="btn-sm" onclick="act('reveal',\${i})">Finder</button>
+            <button class="btn-sm" onclick="act('reveal',\${i})">Mostrar</button>
           </div>
         </div>\`
     ).join('')
