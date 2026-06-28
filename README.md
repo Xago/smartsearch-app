@@ -1,106 +1,126 @@
 # smartsearch
 
-Herramienta local de búsqueda de archivos para **macOS y Linux**. Disponible en dos modos: CLI interactivo y UI web en el browser.
+> **Find files without the frustration.**
+> **Encuentra archivos sin el sufrimiento.**
 
 ---
 
-## Instalación
+Searching for a file on Mac or Linux can feel like an exhausting task. Finder often returns a flood of unrelated results. On Linux, it's even worse for most users. Built-in search tools are complex, unfriendly, and get in your way.
+
+**smartsearch** was built out of that frustration. It asks you simple questions — what type of file, part of the name, when, where — and returns exactly what you're looking for. Nothing more.
+
+---
+
+Buscar un archivo en Mac o Linux puede volverse agotador. El Finder muchas veces arroja resultados que no tienen nada que ver con lo que buscas. En Linux, para la mayoría de los usuarios, es aún peor. Las herramientas de búsqueda nativas son complejas, poco amigables y te hacen perder tiempo.
+
+**smartsearch** nació de esa frustración. Te hace preguntas simples — qué tipo de archivo, parte del nombre, cuándo, dónde — y te devuelve exactamente lo que necesitas. Nada más.
+
+---
+
+## Features / Características
+
+- 🔍 Search by file type, partial name, date range or location
+- 🖥️ Works on **macOS and Linux**
+- 🌐 Clean web UI in the browser — or use it from the terminal
+- 📁 Searches your profile, iCloud Drive (macOS) and external drives
+- ⚡ Uses Spotlight on macOS when available, `find` everywhere else
+- 🔒 100% local — no cloud, no account, no tracking
+
+---
+
+- 🔍 Busca por tipo de archivo, nombre parcial, rango de fechas o ubicación
+- 🖥️ Funciona en **macOS y Linux**
+- 🌐 UI web limpia en el browser — o úsalo desde la terminal
+- 📁 Busca en tu perfil, iCloud Drive (macOS) y unidades externas
+- ⚡ Usa Spotlight en macOS cuando está disponible, `find` en todo lo demás
+- 🔒 100% local — sin nube, sin cuenta, sin rastreo
+
+---
+
+## Installation / Instalación
 
 ```bash
+git clone https://github.com/Xago/smartsearch-app
+cd smartsearch-app
 bash install.sh
 ```
 
-El script detecta el sistema operativo y configura todo automáticamente:
+**Requires / Requiere:** Node.js → https://nodejs.org
 
-| Paso | macOS | Linux |
-|---|---|---|
-| CLI en `~/bin` | symlink | symlink |
-| PATH | `~/.zshrc` | `~/.bashrc` |
-| Auto-inicio servidor | LaunchAgent (launchd) | systemd user service |
+The installer detects your OS and configures everything automatically.
+El instalador detecta tu sistema operativo y lo configura todo automáticamente.
 
-**Requisito:** Node.js instalado (`https://nodejs.org`).
-
----
-
-## Archivos
-
-| Archivo | Descripción |
-|---|---|
-| `smartsearch` | CLI interactivo (bash) |
-| `smartsearch-ui.js` | Servidor web local (Node.js) |
-| `install.sh` | Instalador para macOS y Linux |
-
----
-
-## UI Web (recomendada)
-
-El servidor corre en background desde el login. Abre en el browser:
-
+Then open in your browser / Luego abre en el browser:
 ```
 http://localhost:7823
 ```
 
-### Gestión del servidor
+---
+
+## How it works / Cómo funciona
+
+The installer sets up a background server that starts automatically on login — no need to run anything manually. Just open the browser and search.
+
+El instalador configura un servidor en background que arranca automáticamente con el login — no necesitas correr nada manualmente. Solo abre el browser y busca.
+
+| OS | Auto-start |
+|---|---|
+| macOS | LaunchAgent (launchd) |
+| Linux | systemd user service |
+
+---
+
+## Server management / Gestión del servidor
 
 **macOS:**
 ```bash
-# reiniciar
+# restart / reiniciar
 launchctl unload ~/Library/LaunchAgents/com.smartsearch.plist
 launchctl load   ~/Library/LaunchAgents/com.smartsearch.plist
 
-# detener
-launchctl unload ~/Library/LaunchAgents/com.smartsearch.plist
-
-# ver log
+# logs
 tail -f /tmp/smartsearch.log
 ```
 
 **Linux:**
 ```bash
-# reiniciar
+# restart / reiniciar
 systemctl --user restart smartsearch
 
-# detener
-systemctl --user stop smartsearch
-
-# habilitar/deshabilitar auto-inicio
-systemctl --user enable smartsearch
-systemctl --user disable smartsearch
-
-# ver log
+# logs
 tail -f /tmp/smartsearch.log
 ```
 
-### Parámetros de búsqueda
+---
 
-**Tipo** — selección exclusiva:
-- `Imágenes` — png, jpg, jpeg, webp, svg, heic
-- `Documentos` — elegir extensiones: pdf, docx, xlsx, pptx, txt
-- `Otro` — ingresar extensión libre (ej: `mp4`)
+## Search parameters / Parámetros de búsqueda
 
-**Nombre parcial** — filtra por texto en el nombre del archivo. Vacío = sin filtro.
+**Type / Tipo:**
+- Images / Imágenes — png, jpg, jpeg, webp, svg, heic
+- Documents / Documentos — pdf, docx, xlsx, pptx, txt (selectable / seleccionables)
+- Other / Otro — any extension / cualquier extensión
 
-**Período**:
-- `Última semana` / `Último mes` — relativo a hoy
-- `Rango` — selección de fecha inicio y fin con picker nativo
-- `Sin límite` — sin filtro de fecha
+**Name / Nombre:** partial match, case-insensitive / coincidencia parcial, sin distinción de mayúsculas
 
-**Dónde buscar** — selección múltiple, todas apagadas por defecto:
-- `Perfil de usuario (~)` — busca solo en directorios visibles del home, excluyendo `~/Library`, `~/Applications` y carpetas ocultas
-- `iCloud Drive` — solo macOS: `~/Library/Mobile Documents/com~apple~CloudDocs`
-- Unidades externas detectadas automáticamente:
-  - macOS: `/Volumes/*`
-  - Linux: `/media/$USER/*`, `/mnt/*`, `/run/media/$USER/*`
+**Period / Período:** last week, last month, custom range, or no limit / última semana, último mes, rango personalizado o sin límite
 
-Cada volumen muestra su estado:
-- 🟢 `Spotlight` — usa `mdfind` (rápido, solo macOS)
-- 🟠 `sin índice` — escaneo directo con `find`
+**Where / Dónde:** user profile, iCloud Drive (macOS), external drives / perfil de usuario, iCloud Drive (macOS), unidades externas
 
-### Resultados
+---
 
-Ordenados alfabéticamente por nombre. Por cada archivo:
-- **Abrir** — abre con la app por defecto del sistema
-- **Mostrar** — revela el archivo en el explorador de archivos (Finder en macOS, Nautilus u otro en Linux)
+## Where it searches / Dónde busca
+
+### User profile / Perfil de usuario (`~`)
+Searches all **visible** top-level directories in your home folder. Automatically excludes:
+Busca todos los directorios **visibles** de primer nivel en tu carpeta personal. Excluye automáticamente:
+
+- `~/Library` — app data, caches / datos de apps, cachés (macOS)
+- `~/Applications` (macOS)
+- Hidden directories / Directorios ocultos (`~/.git`, `~/.npm`, etc.)
+
+### External drives / Unidades externas
+- macOS: `/Volumes/*`
+- Linux: `/media/$USER/*`, `/mnt/*`, `/run/media/$USER/*`
 
 ---
 
@@ -110,86 +130,27 @@ Ordenados alfabéticamente por nombre. Por cada archivo:
 smartsearch
 ```
 
-Mismos parámetros que la UI pero en modo interactivo guiado.
-
-### Acciones en resultados
+Same parameters, guided interactive mode.
+Mismos parámetros, modo interactivo guiado.
 
 ```
-1 / a1   → abrir archivo [1]
-r1       → revelar archivo [1] en el explorador
-m        → modificar un parámetro sin reiniciar búsqueda
-n        → nueva búsqueda
-q        → salir
+1 / a1   → open file / abrir archivo
+r1       → reveal in file manager / mostrar en explorador
+m        → modify one parameter / modificar un parámetro
+n        → new search / nueva búsqueda
+q        → quit / salir
 ```
 
 ---
 
-## Dónde busca (y qué excluye)
+## Add more document extensions / Agregar extensiones de documento
 
-### Perfil interno (`~`)
-Busca en todos los directorios **visibles** de primer nivel en el home:
-`~/Desktop`, `~/Documents`, `~/Downloads`, `~/Movies`, `~/Music`, `~/Pictures`, etc.
-
-Excluye explícitamente:
-- `~/Library` — datos de apps, navegadores, cachés (macOS)
-- `~/Applications` — apps instaladas (macOS)
-- Directorios ocultos (`~/.vscode`, `~/.npm`, `~/.git`, etc.)
-
-### iCloud Drive (solo macOS)
-Búsqueda completa dentro de `com~apple~CloudDocs`. Usa Spotlight si está indexado.
-
-### Unidades externas
-Sin exclusiones — busca el volumen completo.
-
----
-
-## Motor de búsqueda
-
-| Condición | Motor |
-|---|---|
-| Volumen con Spotlight activo (macOS) | `mdfind` |
-| Volumen sin índice / Linux | `find` |
-| Perfil interno (`~`) | `find` (whitelist de dirs visibles) |
-
-**Nota técnica:** los queries de `mdfind` con `$time` se escapan antes de pasarlos al shell para evitar expansión de variables.
-
----
-
-## Agregar más extensiones de documento
-
-Editar la sección `doc-exts` en `smartsearch-ui.js`:
+Add a chip in `smartsearch-ui.js`:
+Agregar un chip en `smartsearch-ui.js`:
 
 ```html
 <div class="chip" data-val="csv">CSV</div>
 ```
 
-La función `search()` toma automáticamente los chips seleccionados.
-
----
-
-## Actualizar y reiniciar
-
-```bash
-# editar el servidor
-nano ~/bin/smartsearch-ui.js
-
-# aplicar cambios — macOS
-launchctl unload ~/Library/LaunchAgents/com.smartsearch.plist
-launchctl load   ~/Library/LaunchAgents/com.smartsearch.plist
-
-# aplicar cambios — Linux
-systemctl --user restart smartsearch
-```
-
----
-
-## Distribuir a otro usuario
-
-```bash
-# clonar desde GitHub
-git clone https://github.com/Xago/smartsearch-app
-cd smartsearch-app
-bash install.sh
-```
-
-O comprimir la carpeta y enviarla. El instalador funciona igual en macOS y Linux.
+The search function picks it up automatically.
+La función de búsqueda lo toma automáticamente.
