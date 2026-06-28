@@ -1,6 +1,24 @@
 # smartsearch
 
-Herramienta local de búsqueda de archivos para macOS. Disponible en dos modos: CLI interactivo y UI web en el browser.
+Herramienta local de búsqueda de archivos para **macOS y Linux**. Disponible en dos modos: CLI interactivo y UI web en el browser.
+
+---
+
+## Instalación
+
+```bash
+bash install.sh
+```
+
+El script detecta el sistema operativo y configura todo automáticamente:
+
+| Paso | macOS | Linux |
+|---|---|---|
+| CLI en `~/bin` | symlink | symlink |
+| PATH | `~/.zshrc` | `~/.bashrc` |
+| Auto-inicio servidor | LaunchAgent (launchd) | systemd user service |
+
+**Requisito:** Node.js instalado (`https://nodejs.org`).
 
 ---
 
@@ -8,15 +26,15 @@ Herramienta local de búsqueda de archivos para macOS. Disponible en dos modos: 
 
 | Archivo | Descripción |
 |---|---|
-| `~/bin/smartsearch` | CLI interactivo (bash) |
-| `~/bin/smartsearch-ui.js` | Servidor web local (Node.js) |
-| `~/Library/LaunchAgents/com.santiago.smartsearch.plist` | Auto-inicio en login (launchd) |
+| `smartsearch` | CLI interactivo (bash) |
+| `smartsearch-ui.js` | Servidor web local (Node.js) |
+| `install.sh` | Instalador para macOS y Linux |
 
 ---
 
 ## UI Web (recomendada)
 
-El servidor corre en background desde el login. Abre directo en el browser:
+El servidor corre en background desde el login. Abre en el browser:
 
 ```
 http://localhost:7823
@@ -24,15 +42,32 @@ http://localhost:7823
 
 ### Gestión del servidor
 
+**macOS:**
 ```bash
-# reiniciar (obligatorio después de editar smartsearch-ui.js)
-launchctl unload ~/Library/LaunchAgents/com.santiago.smartsearch.plist
-launchctl load   ~/Library/LaunchAgents/com.santiago.smartsearch.plist
+# reiniciar
+launchctl unload ~/Library/LaunchAgents/com.smartsearch.plist
+launchctl load   ~/Library/LaunchAgents/com.smartsearch.plist
 
 # detener
-launchctl unload ~/Library/LaunchAgents/com.santiago.smartsearch.plist
+launchctl unload ~/Library/LaunchAgents/com.smartsearch.plist
 
-# ver log de errores
+# ver log
+tail -f /tmp/smartsearch.log
+```
+
+**Linux:**
+```bash
+# reiniciar
+systemctl --user restart smartsearch
+
+# detener
+systemctl --user stop smartsearch
+
+# habilitar/deshabilitar auto-inicio
+systemctl --user enable smartsearch
+systemctl --user disable smartsearch
+
+# ver log
 tail -f /tmp/smartsearch.log
 ```
 
@@ -52,18 +87,20 @@ tail -f /tmp/smartsearch.log
 
 **Dónde buscar** — selección múltiple, todas apagadas por defecto:
 - `Perfil de usuario (~)` — busca solo en directorios visibles del home, excluyendo `~/Library`, `~/Applications` y carpetas ocultas
-- `iCloud Drive` — `~/Library/Mobile Documents/com~apple~CloudDocs`
-- Unidades externas detectadas automáticamente (ej: MicroSD)
+- `iCloud Drive` — solo macOS: `~/Library/Mobile Documents/com~apple~CloudDocs`
+- Unidades externas detectadas automáticamente:
+  - macOS: `/Volumes/*`
+  - Linux: `/media/$USER/*`, `/mnt/*`, `/run/media/$USER/*`
 
 Cada volumen muestra su estado:
-- 🟢 `Spotlight` — usa `mdfind` (rápido)
-- 🟠 `find` — escaneo directo (más lento)
+- 🟢 `Spotlight` — usa `mdfind` (rápido, solo macOS)
+- 🟠 `sin índice` — escaneo directo con `find`
 
 ### Resultados
 
 Ordenados alfabéticamente por nombre. Por cada archivo:
-- **Abrir** — abre con la app por defecto
-- **Finder** — revela el archivo en Finder seleccionado
+- **Abrir** — abre con la app por defecto del sistema
+- **Mostrar** — revela el archivo en el explorador de archivos (Finder en macOS, Nautilus u otro en Linux)
 
 ---
 
@@ -73,13 +110,13 @@ Ordenados alfabéticamente por nombre. Por cada archivo:
 smartsearch
 ```
 
-Mismos parámetros que la UI pero en modo interactivo guiado. Útil para uso rápido desde terminal.
+Mismos parámetros que la UI pero en modo interactivo guiado.
 
 ### Acciones en resultados
 
 ```
-a1       → abrir archivo [1]
-r1       → revelar archivo [1] en Finder
+1 / a1   → abrir archivo [1]
+r1       → revelar archivo [1] en el explorador
 m        → modificar un parámetro sin reiniciar búsqueda
 n        → nueva búsqueda
 q        → salir
@@ -91,14 +128,14 @@ q        → salir
 
 ### Perfil interno (`~`)
 Busca en todos los directorios **visibles** de primer nivel en el home:
-`~/Desktop`, `~/Documents`, `~/Downloads`, `~/Movies`, `~/Music`, `~/Pictures`, `~/smarteck`, etc.
+`~/Desktop`, `~/Documents`, `~/Downloads`, `~/Movies`, `~/Music`, `~/Pictures`, etc.
 
 Excluye explícitamente:
-- `~/Library` — datos de apps, navegadores, cachés
-- `~/Applications` — apps instaladas
+- `~/Library` — datos de apps, navegadores, cachés (macOS)
+- `~/Applications` — apps instaladas (macOS)
 - Directorios ocultos (`~/.vscode`, `~/.npm`, `~/.git`, etc.)
 
-### iCloud Drive
+### iCloud Drive (solo macOS)
 Búsqueda completa dentro de `com~apple~CloudDocs`. Usa Spotlight si está indexado.
 
 ### Unidades externas
@@ -110,11 +147,11 @@ Sin exclusiones — busca el volumen completo.
 
 | Condición | Motor |
 |---|---|
-| Volumen con Spotlight activo | `mdfind` |
-| Volumen sin índice Spotlight | `find` |
+| Volumen con Spotlight activo (macOS) | `mdfind` |
+| Volumen sin índice / Linux | `find` |
 | Perfil interno (`~`) | `find` (whitelist de dirs visibles) |
 
-**Nota técnica:** los queries de `mdfind` con `$time` se escapan antes de pasarlos al shell para evitar expansión de variables (`$time` → vacío → query inválido).
+**Nota técnica:** los queries de `mdfind` con `$time` se escapan antes de pasarlos al shell para evitar expansión de variables.
 
 ---
 
@@ -126,7 +163,7 @@ Editar la sección `doc-exts` en `smartsearch-ui.js`:
 <div class="chip" data-val="csv">CSV</div>
 ```
 
-Y en la función `search()` del mismo archivo, la lógica de tipo `docs` las tomará automáticamente desde los chips seleccionados.
+La función `search()` toma automáticamente los chips seleccionados.
 
 ---
 
@@ -136,7 +173,23 @@ Y en la función `search()` del mismo archivo, la lógica de tipo `docs` las tom
 # editar el servidor
 nano ~/bin/smartsearch-ui.js
 
-# aplicar cambios
-launchctl unload ~/Library/LaunchAgents/com.santiago.smartsearch.plist
-launchctl load   ~/Library/LaunchAgents/com.santiago.smartsearch.plist
+# aplicar cambios — macOS
+launchctl unload ~/Library/LaunchAgents/com.smartsearch.plist
+launchctl load   ~/Library/LaunchAgents/com.smartsearch.plist
+
+# aplicar cambios — Linux
+systemctl --user restart smartsearch
 ```
+
+---
+
+## Distribuir a otro usuario
+
+```bash
+# clonar desde GitHub
+git clone https://github.com/Xago/smartsearch-app
+cd smartsearch-app
+bash install.sh
+```
+
+O comprimir la carpeta y enviarla. El instalador funciona igual en macOS y Linux.
