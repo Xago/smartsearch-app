@@ -268,7 +268,10 @@ input[type=text]:focus,input[type=date]:focus{border-color:#007aff;background:#f
 </div>
 
 <div class="card" id="result-card" style="display:none">
-  <div class="label">Resultados</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div class="label" style="margin-bottom:0">Resultados</div>
+    <button class="btn-sm" onclick="window.scrollTo({top:0,behavior:'smooth'})">Modificar busqueda</button>
+  </div>
   <div id="count"></div>
   <div id="result-list"></div>
 </div>
