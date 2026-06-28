@@ -52,8 +52,10 @@ async function search ({ type, extensions, nameFilter, period, dateFrom, dateTo,
   // tipo → mdfind query + patrones find
   let mdType, exts
   if (type === 'images') {
-    mdType = "kMDItemContentTypeTree == 'public.image'"
-    exts   = ['png','jpg','jpeg','webp','svg','heic']
+    exts   = extensions?.length ? extensions : ['png','jpg','jpeg','webp','svg','heic']
+    mdType = extensions?.length
+      ? `(${exts.map(e => `kMDItemFSName == '*.${e}'cd`).join(' || ')})`
+      : "kMDItemContentTypeTree == 'public.image'"
   } else {
     exts   = extensions?.length ? extensions : ['pdf','docx','xlsx','pptx','txt']
     mdType = `(${exts.map(e => `kMDItemFSName == '*.${e}'cd`).join(' || ')})`
@@ -210,6 +212,16 @@ input[type=text]:focus,input[type=date]:focus{border-color:#007aff;background:#f
     <div class="chip"    data-val="docs">Documentos</div>
     <div class="chip"    data-val="other">Otro</div>
   </div>
+  <div id="img-exts" style="display:block;margin-top:12px">
+    <div class="chips" id="img-ext-grp">
+      <div class="chip" data-val="png">PNG</div>
+      <div class="chip" data-val="jpg">JPG</div>
+      <div class="chip" data-val="jpeg">JPEG</div>
+      <div class="chip" data-val="webp">WEBP</div>
+      <div class="chip" data-val="svg">SVG</div>
+      <div class="chip" data-val="heic">HEIC</div>
+    </div>
+  </div>
   <div id="doc-exts" style="display:none;margin-top:12px">
     <div class="chips" id="ext-grp">
       <div class="chip" data-val="pdf">PDF</div>
@@ -281,12 +293,14 @@ function chipVal  (groupId) { return document.querySelector('#' + groupId + ' .c
 function chipVals (groupId) { return [...document.querySelectorAll('#' + groupId + ' .chip.on')].map(c => c.dataset.val) }
 
 radioChips('type-grp', v => {
-  document.getElementById('doc-exts').style.display  = v === 'docs'  ? 'block' : 'none'
-  document.getElementById('other-ext').style.display = v === 'other' ? 'block' : 'none'
+  document.getElementById('img-exts').style.display  = v === 'images' ? 'block' : 'none'
+  document.getElementById('doc-exts').style.display  = v === 'docs'   ? 'block' : 'none'
+  document.getElementById('other-ext').style.display = v === 'other'  ? 'block' : 'none'
 })
 radioChips('period-grp', v => {
   document.getElementById('date-range').style.display = v === 'range' ? 'block' : 'none'
 })
+multiChips('img-ext-grp')
 multiChips('ext-grp')
 
 // fechas por defecto
@@ -317,8 +331,9 @@ async function doSearch () {
   const nameFilter = document.getElementById('name-filter').value.trim()
 
   let extensions = []
-  if (type === 'docs')  extensions = chipVals('ext-grp')
-  if (type === 'other') extensions = [document.getElementById('custom-ext').value.trim()].filter(Boolean)
+  if (type === 'images') extensions = chipVals('img-ext-grp')
+  if (type === 'docs')   extensions = chipVals('ext-grp')
+  if (type === 'other')  extensions = [document.getElementById('custom-ext').value.trim()].filter(Boolean)
 
   if (!volumes.length) { alert('Selecciona al menos un volumen'); return }
 
