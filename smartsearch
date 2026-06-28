@@ -1,16 +1,62 @@
 #!/usr/bin/env bash
-# smartsearch — búsqueda interactiva de archivos en macOS
+# smartsearch — búsqueda interactiva de archivos en macOS y Linux
 # ponytail: bash puro, mdfind/find/open nativos, sin dependencias
 
 b=$(tput bold 2>/dev/null); r=$(tput sgr0 2>/dev/null)
 g=$(tput setaf 2 2>/dev/null); y=$(tput setaf 3 2>/dev/null); c=$(tput setaf 6 2>/dev/null)
 
-# mdutil necesita el punto de montaje del volumen, no un subdirectorio
+OS=$(uname -s)   # Darwin = macOS | Linux = Linux
+
+# ── helpers portables ──────────────────────────────────────────────────────────
 mount_of() { df -P "$1" 2>/dev/null | awk 'NR==2{print $6}'; }
-is_indexed() { mdutil -s "$(mount_of "$1")" 2>/dev/null | grep -q "Indexing enabled"; }
+
+is_indexed() {
+    [[ "$OS" != "Darwin" ]] && return 1   # ponytail: Linux siempre usa find
+    mdutil -s "$(mount_of "$1")" 2>/dev/null | grep -q "Indexing enabled"
+}
+
+mod_time() {
+    # ponytail: BSD vs GNU stat
+    [[ "$OS" == "Darwin" ]] \
+        && stat -f %m "$1" 2>/dev/null \
+        || stat -c %Y "$1" 2>/dev/null
+}
+
+date_to_epoch() {
+    [[ "$OS" == "Darwin" ]] \
+        && date -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null \
+        || date -d "$1" +%s 2>/dev/null
+}
+
+open_file() {
+    [[ "$OS" == "Darwin" ]] && open "$1" || xdg-open "$1" &>/dev/null &
+}
+
+reveal_file() {
+    if [[ "$OS" == "Darwin" ]]; then
+        open -R "$1"
+    elif command -v nautilus &>/dev/null; then
+        nautilus --select "$1" &>/dev/null &
+    else
+        xdg-open "$(dirname "$1")" &>/dev/null &   # ponytail: fallback universal
+    fi
+}
+
+list_external_vols() {
+    if [[ "$OS" == "Darwin" ]]; then
+        find /Volumes -maxdepth 1 -mindepth 1 -type d 2>/dev/null
+    else
+        # ponytail: cubre udisks2 (Ubuntu), /mnt manual y Fedora/run/media
+        for base in "/media/$USER" "/media" "/mnt" "/run/media/$USER"; do
+            [[ -d "$base" ]] && find "$base" -maxdepth 1 -mindepth 1 -type d 2>/dev/null
+        done
+    fi
+}
 
 age() {
-    local d=$(( ( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || echo 0) ) / 86400 ))
+    local ts; ts=$(mod_time "$1")
+    [[ -z "$ts" ]] && echo "?" && return
+    local d=$(( ( $(date +%s) - ts ) / 86400 ))
     case $d in 0) echo "hoy";; 1) echo "ayer";; *) echo "hace ${d}d";; esac
 }
 
@@ -74,8 +120,8 @@ pick_period() {
            printf "Hasta  (YYYY-MM-DD): "; read -r to
            local now from_ts to_ts days_from days_to
            now=$(date +%s)
-           from_ts=$(date -j -f "%Y-%m-%d" "$from" +%s 2>/dev/null || echo 0)
-           to_ts=$(date -j -f "%Y-%m-%d" "$to" +%s 2>/dev/null || echo 0)
+           from_ts=$(date_to_epoch "$from" || echo 0)
+           to_ts=$(date_to_epoch "$to"   || echo 0)
            days_from=$(( (now - from_ts) / 86400 + 1 ))
            days_to=$(( (now - to_ts) / 86400 ))
            [[ $days_to -lt 0 ]] && days_to=0
@@ -88,15 +134,13 @@ pick_period() {
 
 # ── volúmenes ──────────────────────────────────────────────────────────────────
 pick_volumes() {
-    # interno = solo perfil de usuario (excluye dirs de sistema)
-    # externos = volumen completo
     local vols=("$HOME")
     local labels=("~/  (perfil de usuario)")
     while IFS= read -r v; do
         [[ "$v" == *"TimeMachine"* ]] && continue
         vols+=("$v")
         labels+=("$v  (unidad externa)")
-    done < <(find /Volumes -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    done < <(list_external_vols | sort)
 
     printf "\n${b}¿Dónde buscar?${r}\n"
     printf "  0) Todo\n"
@@ -168,7 +212,7 @@ do_search() {
                 find "$d" -type f \( "${FIND_PAT[@]}" \) "${MTIME[@]}" "${find_name[@]}" 2>/dev/null >> "$tmpfile"
             done
         else
-            # externos: volumen completo, mdfind si está indexado
+            # externos: mdfind si está indexado (macOS), find en Linux
             if is_indexed "$vol"; then
                 local md_query="($MD_TYPE)"
                 [[ -n "$MD_DATE" ]] && md_query+=" && $MD_DATE"
@@ -191,7 +235,8 @@ do_search() {
     while IFS= read -r f; do
         RESULTS+=("$f")
     done < <(for f in "${seen[@]}"; do
-        stat -f "%m %N" "$f" 2>/dev/null
+        ts=$(mod_time "$f")
+        [[ -n "$ts" ]] && printf "%s %s\n" "$ts" "$f"
     done | sort -rn | cut -d' ' -f2-)
 }
 
@@ -213,7 +258,7 @@ show_results() {
 
 # ── acciones ───────────────────────────────────────────────────────────────────
 action_menu() {
-    local hint="${b}Acciones:${r}  <n>=abrir  a<n>=abrir  r<n>=revelar en Finder  m=modificar  n=nueva  q=salir"
+    local hint="${b}Acciones:${r}  <n>=abrir  a<n>=abrir  r<n>=revelar  m=modificar  n=nueva  q=salir"
     printf "\n%s\n" "$hint"
     while true; do
         printf "→ "
@@ -225,15 +270,15 @@ action_menu() {
             m|M) modify_search; printf "\n%s\n" "$hint" ;;
             [0-9]*) idx="$cmd"
                  file=$([[ "$idx" =~ ^[0-9]+$ ]] && echo "${RESULTS[$((idx-1))]:-}" || echo "")
-                 [[ -n "$file" && -f "$file" ]] && open "$file" \
+                 [[ -n "$file" && -f "$file" ]] && open_file "$file" \
                      || printf "${y}Número inválido${r}\n" ;;
             a*)  idx="${cmd//[^0-9]/}"
                  file=$([[ "$idx" =~ ^[0-9]+$ ]] && echo "${RESULTS[$((idx-1))]:-}" || echo "")
-                 [[ -n "$file" && -f "$file" ]] && open "$file" \
+                 [[ -n "$file" && -f "$file" ]] && open_file "$file" \
                      || printf "${y}Uso: a<n>  ejemplo: a1${r}\n" ;;
             r*)  idx="${cmd//[^0-9]/}"
                  file=$([[ "$idx" =~ ^[0-9]+$ ]] && echo "${RESULTS[$((idx-1))]:-}" || echo "")
-                 [[ -n "$file" && -f "$file" ]] && open -R "$file" \
+                 [[ -n "$file" && -f "$file" ]] && reveal_file "$file" \
                      || printf "${y}Uso: r<n>  ejemplo: r1${r}\n" ;;
             *)   printf "${y}?${r}  " ;;
         esac
