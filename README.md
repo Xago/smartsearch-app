@@ -96,8 +96,8 @@ tail -f /tmp/smartsearch.log
 ## Search parameters / Parámetros de búsqueda
 
 **Type / Tipo:**
-- Images / Imágenes — png, jpg, jpeg, webp, svg, heic
-- Documents / Documentos — pdf, docx, xlsx, pptx, txt (selectable / seleccionables)
+- Images / Imágenes — select specific formats: PNG, JPG, JPEG, WEBP, SVG, HEIC (none selected = all / ninguna = todas)
+- Documents / Documentos — select specific formats: PDF, DOCX, XLSX, PPTX, TXT (none selected = all / ninguna = todas)
 - Other / Otro — any extension / cualquier extensión
 
 **Name / Nombre:** partial match, case-insensitive / coincidencia parcial, sin distinción de mayúsculas
@@ -105,6 +105,10 @@ tail -f /tmp/smartsearch.log
 **Period / Período:** last week, last month, custom range, or no limit / última semana, último mes, rango personalizado o sin límite
 
 **Where / Dónde:** user profile, iCloud Drive (macOS), external drives / perfil de usuario, iCloud Drive (macOS), unidades externas
+
+**Results / Resultados:** sorted alphabetically. Each file has Open and Show (reveal in file manager) buttons. A **Modificar búsqueda** button at the top of the results scrolls back to the form to adjust any parameter and search again.
+
+Los resultados están ordenados alfabéticamente. Cada archivo tiene botones Abrir y Mostrar. El botón **Modificar búsqueda** en el encabezado de resultados sube al formulario para ajustar cualquier parámetro y volver a buscar.
 
 ---
 
